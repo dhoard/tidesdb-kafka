@@ -124,21 +124,29 @@ def create_summary_table(benchmarks_dir, output_file):
     """Create a summary table of all benchmarks"""
     summaries = []
     
-    for csv_file in Path(benchmarks_dir).glob('*.csv'):
+    for csv_file in sorted(Path(benchmarks_dir).glob('*.csv')):
         df = pd.read_csv(csv_file)
-        if len(df) > 0:
-            benchmark_name = df['Benchmark'].iloc[0]
-            avg_speedup = df['Speedup'].mean()
-            max_speedup = df['Speedup'].max()
-            min_speedup = df['Speedup'].min()
-            
-            summaries.append({
-                'Benchmark': benchmark_name,
-                'Avg Speedup': f'{avg_speedup:.2f}x',
-                'Min Speedup': f'{min_speedup:.2f}x',
-                'Max Speedup': f'{max_speedup:.2f}x',
-                'Winner': 'TidesDB' if avg_speedup > 1.0 else 'RocksDB'
-            })
+        if len(df) == 0:
+            continue
+        # Only include standard benchmark CSVs that have Benchmark + Speedup columns
+        if 'Benchmark' not in df.columns or 'Speedup' not in df.columns:
+            continue
+        # Replace inf speedup with a large finite number for averaging
+        speedups = df['Speedup'].replace([float('inf'), float('-inf')], float('nan')).dropna()
+        if len(speedups) == 0:
+            continue
+        benchmark_name = df['Benchmark'].iloc[0]
+        avg_speedup = speedups.mean()
+        max_speedup = speedups.max()
+        min_speedup = speedups.min()
+        
+        summaries.append({
+            'Benchmark': benchmark_name,
+            'Avg Speedup': f'{avg_speedup:.2f}x',
+            'Min Speedup': f'{min_speedup:.2f}x',
+            'Max Speedup': f'{max_speedup:.2f}x',
+            'Winner': 'TidesDB' if avg_speedup > 1.0 else 'RocksDB'
+        })
     
     summary_df = pd.DataFrame(summaries)
     
@@ -461,6 +469,115 @@ def plot_metrics_combined(df, title, output_file):
     print(f"Created: {output_file}")
     plt.close()
 
+def plot_latency_percentiles(df, title, output_file):
+    """Create grouped bar chart of latency percentiles per operation type.
+    
+    CSV columns: OpType, SampleOps,
+      TidesDB_p50_ns .. TidesDB_max_ns, RocksDB_p50_ns .. RocksDB_max_ns
+    """
+    percentiles = ['p50', 'p90', 'p95', 'p99', 'p999', 'max']
+    pctl_labels = ['p50', 'p90', 'p95', 'p99', 'p99.9', 'max']
+    n_ops = len(df)
+    
+    fig, axes = plt.subplots(1, n_ops, figsize=(7 * n_ops, 7), squeeze=False)
+    axes = axes[0]
+    
+    for idx, (_, row) in enumerate(df.iterrows()):
+        ax = axes[idx]
+        op = row['OpType']
+        
+        tides_vals = [row[f'TidesDB_{p}_ns'] / 1000.0 for p in percentiles]  # ns -> us
+        rocks_vals = [row[f'RocksDB_{p}_ns'] / 1000.0 for p in percentiles]
+        
+        x = range(len(percentiles))
+        width = 0.35
+        
+        bars1 = ax.bar([i - width/2 for i in x], tides_vals, width,
+                       label='TidesDB', color='#2E86AB', alpha=0.8)
+        bars2 = ax.bar([i + width/2 for i in x], rocks_vals, width,
+                       label='RocksDB', color='#A23B72', alpha=0.8)
+        
+        ax.set_xlabel('Percentile', fontsize=11, fontweight='bold')
+        ax.set_ylabel('Latency (\u00b5s)', fontsize=11, fontweight='bold')
+        ax.set_title(f'{op.capitalize()} Latency ({row["SampleOps"]:,} ops)',
+                     fontsize=12, fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(pctl_labels)
+        ax.legend(fontsize=10)
+        ax.grid(axis='y', alpha=0.3)
+        
+        # Use log scale if tail latencies are much larger than median
+        if max(tides_vals[-1], rocks_vals[-1]) > 10 * max(max(tides_vals[0], 1), max(rocks_vals[0], 1)):
+            ax.set_yscale('log')
+            ax.set_ylabel('Latency (\u00b5s, log scale)', fontsize=11, fontweight='bold')
+        
+        # Value labels on bars
+        for bars in [bars1, bars2]:
+            for bar in bars:
+                h = bar.get_height()
+                if h > 0 and not pd.isna(h):
+                    label = f'{h:.1f}' if h < 100 else f'{h:.0f}'
+                    ax.text(bar.get_x() + bar.get_width()/2., h, label,
+                           ha='center', va='bottom', fontsize=7, rotation=45)
+    
+    plt.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    print(f"Created: {output_file}")
+    plt.close()
+
+
+def plot_latency_percentile_ratio(df, title, output_file):
+    """Create line chart showing RocksDB/TidesDB latency ratio per percentile.
+    
+    Values > 1 mean TidesDB is faster; values < 1 mean RocksDB is faster.
+    """
+    percentiles = ['p50', 'p90', 'p95', 'p99', 'p999', 'max']
+    pctl_labels = ['p50', 'p90', 'p95', 'p99', 'p99.9', 'max']
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    colors = {'write': '#2E86AB', 'read': '#A23B72', 'mixed': '#F18F01'}
+    markers = {'write': 'o', 'read': 's', 'mixed': 'D'}
+    
+    for _, row in df.iterrows():
+        op = row['OpType']
+        ratios = []
+        for p in percentiles:
+            tides = row[f'TidesDB_{p}_ns']
+            rocks = row[f'RocksDB_{p}_ns']
+            ratio = rocks / tides if tides > 0 else float('nan')
+            ratios.append(ratio)
+        
+        ax.plot(pctl_labels, ratios, marker=markers.get(op, 'o'), linewidth=2.5,
+                markersize=10, color=colors.get(op, '#333333'), label=op.capitalize())
+    
+    ax.axhline(y=1.0, color='red', linestyle='--', linewidth=1.5, alpha=0.7,
+               label='Break-even (1.0x)')
+    
+    ax.set_xlabel('Percentile', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Latency Ratio (RocksDB / TidesDB)', fontsize=12, fontweight='bold')
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    
+    # Annotate values
+    for _, row in df.iterrows():
+        op = row['OpType']
+        for i, p in enumerate(percentiles):
+            tides = row[f'TidesDB_{p}_ns']
+            rocks = row[f'RocksDB_{p}_ns']
+            ratio = rocks / tides if tides > 0 else float('nan')
+            if not pd.isna(ratio):
+                ax.text(i, ratio, f'{ratio:.2f}x', ha='center', va='bottom',
+                       fontsize=8, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    print(f"Created: {output_file}")
+    plt.close()
+
+
 def generate_all_visualizations(benchmarks_dir='.', output_dir='charts'):
     """Generate all visualization charts"""
     
@@ -469,12 +586,13 @@ def generate_all_visualizations(benchmarks_dir='.', output_dir='charts'):
         'random_writes': 'Random Write Performance',
         'sequential_reads': 'Sequential Read Performance',
         'random_reads': 'Random Read Performance',
-        'mixed_workload': 'Mixed Workload (50% Read, 50% Write)',
+        'mixed_workload': 'Mixed Workload Performance',
         'range_scans': 'Range Scan Performance',
         'bulk_writes': 'Bulk Write Performance (putAll)',
         'updates': 'Update Performance',
-        'large_values': 'Large Value Performance (10KB)',
-        'iteration': 'Full Iteration Performance'
+        'large_values': 'Large Value Performance',
+        'iteration': 'Full Iteration Performance',
+        'deletes': 'Delete Performance'
     }
     
     # Extended benchmarks
@@ -482,7 +600,8 @@ def generate_all_visualizations(benchmarks_dir='.', output_dir='charts'):
         'large_datasets': 'Large Dataset Performance (with warmup)',
         'concurrent_access': 'Concurrent Access Performance',
         'compaction_pressure': 'Compaction Pressure Test',
-        'metrics': 'Performance with Memory/CPU Metrics'
+        'metrics': 'Performance with Memory/CPU Metrics',
+        'latency_percentiles': 'Latency Percentile Distribution'
     }
     
     print("Generating benchmark visualizations...\n")
@@ -606,6 +725,22 @@ def generate_all_visualizations(benchmarks_dir='.', output_dir='charts'):
                 os.path.join(output_dir, f'metrics_combined{suffix}.png')
             )
     
+    # Latency percentiles
+    csv_path = find_latest_csv(benchmarks_dir, 'latency_percentiles')
+    if csv_path:
+        df = load_benchmark_data(csv_path)
+        if df is not None:
+            plot_latency_percentiles(
+                df,
+                'Latency Percentile Distribution (TidesDB vs RocksDB)',
+                os.path.join(output_dir, f'latency_percentiles{suffix}.png')
+            )
+            plot_latency_percentile_ratio(
+                df,
+                'Latency Ratio by Percentile (RocksDB / TidesDB)',
+                os.path.join(output_dir, f'latency_ratio{suffix}.png')
+            )
+    
     # Create summary table
     print("\nGenerating summary table...")
     create_summary_table(benchmarks_dir, os.path.join(output_dir, f'summary_table{suffix}.png'))
@@ -621,6 +756,7 @@ def generate_all_visualizations(benchmarks_dir='.', output_dir='charts'):
     print("  - Concurrent access charts (throughput & scalability)")
     print("  - Compaction pressure charts")
     print("  - Memory/CPU metrics charts")
+    print("  - Latency percentile charts")
     print("  - Summary table")
     print("=" * 60)
 

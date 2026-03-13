@@ -13,16 +13,33 @@ import org.apache.kafka.streams.state.KeyValueStore;
  *     .groupByKey()
  *     .count(Materialized.as(new TidesDBStoreSupplier("my-store")));
  * </pre>
+ * 
+ * Usage with custom config:
+ * <pre>
+ * TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+ *     .compressionAlgorithm(CompressionAlgorithm.ZSTD_COMPRESSION)
+ *     .syncMode(SyncMode.SYNC_NONE)
+ *     .build();
+ * builder.stream("input")
+ *     .groupByKey()
+ *     .count(Materialized.as(new TidesDBStoreSupplier("my-store", config)));
+ * </pre>
  */
 public class TidesDBStoreSupplier implements KeyValueBytesStoreSupplier {
 
     private final String name;
+    private final TidesDBStoreConfig storeConfig;
 
     public TidesDBStoreSupplier(String name) {
+        this(name, TidesDBStoreConfig.defaultConfig());
+    }
+
+    public TidesDBStoreSupplier(String name, TidesDBStoreConfig config) {
         if (name == null || name.isEmpty()) {
             throw new IllegalArgumentException("Store name cannot be null or empty");
         }
         this.name = name;
+        this.storeConfig = config != null ? config : TidesDBStoreConfig.defaultConfig();
     }
 
     @Override
@@ -32,7 +49,7 @@ public class TidesDBStoreSupplier implements KeyValueBytesStoreSupplier {
 
     @Override
     public KeyValueStore<Bytes, byte[]> get() {
-        return new TidesDBStore(name);
+        return new TidesDBStore(name, storeConfig);
     }
 
     @Override
@@ -45,5 +62,12 @@ public class TidesDBStoreSupplier implements KeyValueBytesStoreSupplier {
      */
     public static TidesDBStoreSupplier create(String name) {
         return new TidesDBStoreSupplier(name);
+    }
+
+    /**
+     * Create a new TidesDB store supplier with the given name and config
+     */
+    public static TidesDBStoreSupplier create(String name, TidesDBStoreConfig config) {
+        return new TidesDBStoreSupplier(name, config);
     }
 }

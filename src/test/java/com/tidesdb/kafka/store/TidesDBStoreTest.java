@@ -1,5 +1,6 @@
 package com.tidesdb.kafka.store;
 
+import com.tidesdb.*;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.streams.KeyValue;
@@ -309,6 +310,245 @@ class TidesDBStoreTest {
             assertThat(iterator.hasNext()).isFalse();
         }
     }
+
+    // ==================== New Feature Tests ====================
+
+    @Test
+    @DisplayName("Should create store with custom config")
+    void testCustomConfig() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .compressionAlgorithm(CompressionAlgorithm.ZSTD_COMPRESSION)
+            .enableBloomFilter(true)
+            .bloomFPR(0.001)
+            .syncMode(SyncMode.SYNC_NONE)
+            .writeBufferSize(32 * 1024 * 1024)
+            .enableBlockIndexes(true)
+            .build();
+
+        TidesDBStore customStore = new TidesDBStore("custom-store", config);
+        StateStoreContext customCtx = mock(StateStoreContext.class);
+        File customDir = new File(tempDir, "custom");
+        customDir.mkdirs();
+        when(customCtx.stateDir()).thenReturn(customDir);
+
+        customStore.init(customCtx, customStore);
+        assertThat(customStore.isOpen()).isTrue();
+        assertThat(customStore.getStoreConfig().getCompressionAlgorithm())
+            .isEqualTo(CompressionAlgorithm.ZSTD_COMPRESSION);
+        assertThat(customStore.getStoreConfig().getSyncMode())
+            .isEqualTo(SyncMode.SYNC_NONE);
+
+        // Verify basic operations work with custom config
+        customStore.put(Bytes.wrap("k1".getBytes()), "v1".getBytes());
+        assertThat(customStore.get(Bytes.wrap("k1".getBytes()))).isEqualTo("v1".getBytes());
+
+        customStore.close();
+    }
+
+    @Test
+    @DisplayName("Should put with explicit TTL")
+    void testPutWithTtl() {
+        Bytes key = Bytes.wrap("ttl-key".getBytes(StandardCharsets.UTF_8));
+        byte[] value = "ttl-value".getBytes(StandardCharsets.UTF_8);
+
+        // Put with long TTL (should be readable immediately)
+        store.putWithTtl(key, value, 3600);
+        byte[] retrieved = store.get(key);
+        assertThat(retrieved).isEqualTo(value);
+    }
+
+    @Test
+    @DisplayName("Should throw for null value in putWithTtl")
+    void testPutWithTtlNullValue() {
+        Bytes key = Bytes.wrap("key".getBytes(StandardCharsets.UTF_8));
+        assertThatThrownBy(() -> store.putWithTtl(key, null, 60))
+            .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("Should throw for null key in putWithTtl")
+    void testPutWithTtlNullKey() {
+        assertThatThrownBy(() -> store.putWithTtl(null, "v".getBytes(), 60))
+            .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("Should create store with default TTL config")
+    void testDefaultTtlConfig() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .defaultTtlSeconds(3600)
+            .build();
+
+        TidesDBStore ttlStore = new TidesDBStore("ttl-store", config);
+        StateStoreContext ttlCtx = mock(StateStoreContext.class);
+        File ttlDir = new File(tempDir, "ttl");
+        ttlDir.mkdirs();
+        when(ttlCtx.stateDir()).thenReturn(ttlDir);
+
+        ttlStore.init(ttlCtx, ttlStore);
+        assertThat(ttlStore.getStoreConfig().getDefaultTtlSeconds()).isEqualTo(3600);
+
+        // Put should apply TTL automatically
+        ttlStore.put(Bytes.wrap("k".getBytes()), "v".getBytes());
+        assertThat(ttlStore.get(Bytes.wrap("k".getBytes()))).isEqualTo("v".getBytes());
+
+        ttlStore.close();
+    }
+
+    @Test
+    @DisplayName("Should build store via TidesDBStoreBuilder with config")
+    void testStoreBuilder() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .compressionAlgorithm(CompressionAlgorithm.LZ4_FAST_COMPRESSION)
+            .syncMode(SyncMode.SYNC_NONE)
+            .build();
+
+        TidesDBStoreBuilder builder = TidesDBStoreBuilder.create("builder-store", config);
+        TidesDBStore builtStore = builder.build();
+        assertThat(builtStore.name()).isEqualTo("builder-store");
+        assertThat(builtStore.getStoreConfig().getCompressionAlgorithm())
+            .isEqualTo(CompressionAlgorithm.LZ4_FAST_COMPRESSION);
+    }
+
+    @Test
+    @DisplayName("Should build store via TidesDBStoreSupplier with config")
+    void testStoreSupplier() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .enableBloomFilter(false)
+            .build();
+
+        TidesDBStoreSupplier supplier = TidesDBStoreSupplier.create("supplier-store", config);
+        assertThat(supplier.name()).isEqualTo("supplier-store");
+        assertThat(supplier.metricsScope()).isEqualTo("tidesdb");
+
+        TidesDBStore suppliedStore = (TidesDBStore) supplier.get();
+        assertThat(suppliedStore.getStoreConfig().isEnableBloomFilter()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Should expose column family stats")
+    void testGetStats() throws Exception {
+        store.put(Bytes.wrap("s1".getBytes()), "v1".getBytes());
+        store.put(Bytes.wrap("s2".getBytes()), "v2".getBytes());
+        store.flush();
+
+        Stats stats = store.getStats();
+        assertThat(stats).isNotNull();
+        assertThat(stats.getTotalKeys()).isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("Should expose database-level stats")
+    void testGetDbStats() throws Exception {
+        DbStats dbStats = store.getDbStats();
+        assertThat(dbStats).isNotNull();
+        assertThat(dbStats.getNumColumnFamilies()).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Should expose cache stats")
+    void testGetCacheStats() throws Exception {
+        CacheStats cacheStats = store.getCacheStats();
+        assertThat(cacheStats).isNotNull();
+    }
+
+    @Test
+    @DisplayName("Should compact without error")
+    void testCompact() {
+        store.put(Bytes.wrap("c1".getBytes()), "v1".getBytes());
+        store.flush();
+        assertThatCode(() -> store.compact()).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("Should purge without error")
+    void testPurge() {
+        store.put(Bytes.wrap("p1".getBytes()), "v1".getBytes());
+        assertThatCode(() -> store.purge()).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("Should sync WAL without error")
+    void testSyncWal() {
+        store.put(Bytes.wrap("w1".getBytes()), "v1".getBytes());
+        assertThatCode(() -> store.syncWal()).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("Should report flushing and compacting status")
+    void testFlushingCompactingStatus() throws Exception {
+        // Just verify the methods don't throw
+        assertThat(store.isFlushing()).isIn(true, false);
+        assertThat(store.isCompacting()).isIn(true, false);
+    }
+
+    @Test
+    @DisplayName("Should get store config")
+    void testGetStoreConfig() {
+        TidesDBStoreConfig config = store.getStoreConfig();
+        assertThat(config).isNotNull();
+        assertThat(config.getColumnFamilyName()).isEqualTo("default");
+    }
+
+    @Test
+    @DisplayName("Should create backup")
+    void testBackup() {
+        store.put(Bytes.wrap("bk1".getBytes()), "v1".getBytes());
+        File backupDir = new File(tempDir, "backup-" + System.nanoTime());
+        assertThatCode(() -> store.backup(backupDir.getAbsolutePath()))
+            .doesNotThrowAnyException();
+        assertThat(backupDir).exists();
+    }
+
+    @Test
+    @DisplayName("Should create checkpoint")
+    void testCheckpoint() {
+        store.put(Bytes.wrap("cp1".getBytes()), "v1".getBytes());
+        File cpDir = new File(tempDir, "checkpoint-" + System.nanoTime());
+        assertThatCode(() -> store.checkpoint(cpDir.getAbsolutePath()))
+            .doesNotThrowAnyException();
+        assertThat(cpDir).exists();
+    }
+
+    @Test
+    @DisplayName("Should create store with B+tree klog format")
+    void testBtreeKlogFormat() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .useBtree(true)
+            .build();
+
+        TidesDBStore btreeStore = new TidesDBStore("btree-store", config);
+        StateStoreContext btreeCtx = mock(StateStoreContext.class);
+        File btreeDir = new File(tempDir, "btree");
+        btreeDir.mkdirs();
+        when(btreeCtx.stateDir()).thenReturn(btreeDir);
+
+        btreeStore.init(btreeCtx, btreeStore);
+        assertThat(btreeStore.isOpen()).isTrue();
+
+        // Write and read with B+tree format
+        btreeStore.put(Bytes.wrap("bt1".getBytes()), "v1".getBytes());
+        assertThat(btreeStore.get(Bytes.wrap("bt1".getBytes()))).isEqualTo("v1".getBytes());
+
+        btreeStore.close();
+    }
+
+    @Test
+    @DisplayName("Should expose direct DB and CF access")
+    void testDirectAccess() {
+        assertThat(store.getDb()).isNotNull();
+        assertThat(store.getColumnFamily()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("Should handle delete of non-existent key gracefully")
+    void testDeleteNonExistent() {
+        Bytes key = Bytes.wrap("never-existed".getBytes(StandardCharsets.UTF_8));
+        byte[] result = store.delete(key);
+        assertThat(result).isNull();
+    }
+
+    // ==================== Original Tests ====================
 
     @Test
     @DisplayName("Should handle concurrent reads")

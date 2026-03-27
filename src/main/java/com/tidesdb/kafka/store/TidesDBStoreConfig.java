@@ -18,6 +18,18 @@ public class TidesDBStoreConfig {
     private final boolean logToFile;
     private final long logTruncationAt;
 
+    // Unified memtable settings
+    private final boolean unifiedMemtable;
+    private final long unifiedMemtableWriteBufferSize;
+    private final int unifiedMemtableSkipListMaxLevel;
+    private final float unifiedMemtableSkipListProbability;
+    private final int unifiedMemtableSyncMode;
+    private final long unifiedMemtableSyncIntervalUs;
+
+    // Object store settings
+    private final String objectStoreFsPath;
+    private final ObjectStoreConfig objectStoreConfig;
+
     // Column family settings
     private final long writeBufferSize;
     private final CompressionAlgorithm compressionAlgorithm;
@@ -37,6 +49,12 @@ public class TidesDBStoreConfig {
     private final long klogValueThreshold;
     private final int l0QueueStallThreshold;
     private final int l1FileCountTrigger;
+    private final int dividingLevelOffset;
+    private final long minDiskSpace;
+    private final String comparatorName;
+    private final long objectTargetFileSize;
+    private final boolean objectLazyCompaction;
+    private final boolean objectPrefetchCompaction;
 
     // Store behavior
     private final String columnFamilyName;
@@ -51,6 +69,14 @@ public class TidesDBStoreConfig {
         this.maxMemoryUsage = builder.maxMemoryUsage;
         this.logToFile = builder.logToFile;
         this.logTruncationAt = builder.logTruncationAt;
+        this.unifiedMemtable = builder.unifiedMemtable;
+        this.unifiedMemtableWriteBufferSize = builder.unifiedMemtableWriteBufferSize;
+        this.unifiedMemtableSkipListMaxLevel = builder.unifiedMemtableSkipListMaxLevel;
+        this.unifiedMemtableSkipListProbability = builder.unifiedMemtableSkipListProbability;
+        this.unifiedMemtableSyncMode = builder.unifiedMemtableSyncMode;
+        this.unifiedMemtableSyncIntervalUs = builder.unifiedMemtableSyncIntervalUs;
+        this.objectStoreFsPath = builder.objectStoreFsPath;
+        this.objectStoreConfig = builder.objectStoreConfig;
         this.writeBufferSize = builder.writeBufferSize;
         this.compressionAlgorithm = builder.compressionAlgorithm;
         this.enableBloomFilter = builder.enableBloomFilter;
@@ -69,6 +95,12 @@ public class TidesDBStoreConfig {
         this.klogValueThreshold = builder.klogValueThreshold;
         this.l0QueueStallThreshold = builder.l0QueueStallThreshold;
         this.l1FileCountTrigger = builder.l1FileCountTrigger;
+        this.dividingLevelOffset = builder.dividingLevelOffset;
+        this.minDiskSpace = builder.minDiskSpace;
+        this.comparatorName = builder.comparatorName;
+        this.objectTargetFileSize = builder.objectTargetFileSize;
+        this.objectLazyCompaction = builder.objectLazyCompaction;
+        this.objectPrefetchCompaction = builder.objectPrefetchCompaction;
         this.columnFamilyName = builder.columnFamilyName;
         this.defaultTtlSeconds = builder.defaultTtlSeconds;
     }
@@ -92,6 +124,18 @@ public class TidesDBStoreConfig {
     public boolean isLogToFile() { return logToFile; }
     public long getLogTruncationAt() { return logTruncationAt; }
 
+    // Unified memtable getters
+    public boolean isUnifiedMemtable() { return unifiedMemtable; }
+    public long getUnifiedMemtableWriteBufferSize() { return unifiedMemtableWriteBufferSize; }
+    public int getUnifiedMemtableSkipListMaxLevel() { return unifiedMemtableSkipListMaxLevel; }
+    public float getUnifiedMemtableSkipListProbability() { return unifiedMemtableSkipListProbability; }
+    public int getUnifiedMemtableSyncMode() { return unifiedMemtableSyncMode; }
+    public long getUnifiedMemtableSyncIntervalUs() { return unifiedMemtableSyncIntervalUs; }
+
+    // Object store getters
+    public String getObjectStoreFsPath() { return objectStoreFsPath; }
+    public ObjectStoreConfig getObjectStoreConfig() { return objectStoreConfig; }
+
     // Column family getters
     public long getWriteBufferSize() { return writeBufferSize; }
     public CompressionAlgorithm getCompressionAlgorithm() { return compressionAlgorithm; }
@@ -111,6 +155,12 @@ public class TidesDBStoreConfig {
     public long getKlogValueThreshold() { return klogValueThreshold; }
     public int getL0QueueStallThreshold() { return l0QueueStallThreshold; }
     public int getL1FileCountTrigger() { return l1FileCountTrigger; }
+    public int getDividingLevelOffset() { return dividingLevelOffset; }
+    public long getMinDiskSpace() { return minDiskSpace; }
+    public String getComparatorName() { return comparatorName; }
+    public long getObjectTargetFileSize() { return objectTargetFileSize; }
+    public boolean isObjectLazyCompaction() { return objectLazyCompaction; }
+    public boolean isObjectPrefetchCompaction() { return objectPrefetchCompaction; }
 
     // Store behavior getters
     public String getColumnFamilyName() { return columnFamilyName; }
@@ -126,6 +176,18 @@ public class TidesDBStoreConfig {
         private long maxMemoryUsage = 0; // auto
         private boolean logToFile = false;
         private long logTruncationAt = 24 * 1024 * 1024; // 24MB
+
+        // Unified memtable defaults
+        private boolean unifiedMemtable = false;
+        private long unifiedMemtableWriteBufferSize = 0; // auto
+        private int unifiedMemtableSkipListMaxLevel = 0; // default 12
+        private float unifiedMemtableSkipListProbability = 0; // default 0.25
+        private int unifiedMemtableSyncMode = 0; // SYNC_NONE
+        private long unifiedMemtableSyncIntervalUs = 0; // default
+
+        // Object store defaults
+        private String objectStoreFsPath = null; // null = local only
+        private ObjectStoreConfig objectStoreConfig = null; // null = use defaults
 
         // Column family defaults
         private long writeBufferSize = 64 * 1024 * 1024; // 64MB
@@ -146,6 +208,12 @@ public class TidesDBStoreConfig {
         private long klogValueThreshold = 512;
         private int l0QueueStallThreshold = 20;
         private int l1FileCountTrigger = 4;
+        private int dividingLevelOffset = 2;
+        private long minDiskSpace = 100 * 1024 * 1024; // 100MB
+        private String comparatorName = ""; // empty = default memcmp
+        private long objectTargetFileSize = 0; // 0 = auto (256MB default)
+        private boolean objectLazyCompaction = false;
+        private boolean objectPrefetchCompaction = true;
 
         // Store behavior
         private String columnFamilyName = "default";
@@ -159,6 +227,16 @@ public class TidesDBStoreConfig {
         public Builder maxMemoryUsage(long bytes) { this.maxMemoryUsage = bytes; return this; }
         public Builder logToFile(boolean enable) { this.logToFile = enable; return this; }
         public Builder logTruncationAt(long bytes) { this.logTruncationAt = bytes; return this; }
+
+        public Builder unifiedMemtable(boolean enable) { this.unifiedMemtable = enable; return this; }
+        public Builder unifiedMemtableWriteBufferSize(long bytes) { this.unifiedMemtableWriteBufferSize = bytes; return this; }
+        public Builder unifiedMemtableSkipListMaxLevel(int n) { this.unifiedMemtableSkipListMaxLevel = n; return this; }
+        public Builder unifiedMemtableSkipListProbability(float p) { this.unifiedMemtableSkipListProbability = p; return this; }
+        public Builder unifiedMemtableSyncMode(int mode) { this.unifiedMemtableSyncMode = mode; return this; }
+        public Builder unifiedMemtableSyncIntervalUs(long us) { this.unifiedMemtableSyncIntervalUs = us; return this; }
+
+        public Builder objectStoreFsPath(String path) { this.objectStoreFsPath = path; return this; }
+        public Builder objectStoreConfig(ObjectStoreConfig config) { this.objectStoreConfig = config; return this; }
 
         public Builder writeBufferSize(long bytes) { this.writeBufferSize = bytes; return this; }
         public Builder compressionAlgorithm(CompressionAlgorithm algo) { this.compressionAlgorithm = algo; return this; }
@@ -178,6 +256,12 @@ public class TidesDBStoreConfig {
         public Builder klogValueThreshold(long bytes) { this.klogValueThreshold = bytes; return this; }
         public Builder l0QueueStallThreshold(int n) { this.l0QueueStallThreshold = n; return this; }
         public Builder l1FileCountTrigger(int n) { this.l1FileCountTrigger = n; return this; }
+        public Builder dividingLevelOffset(int n) { this.dividingLevelOffset = n; return this; }
+        public Builder minDiskSpace(long bytes) { this.minDiskSpace = bytes; return this; }
+        public Builder comparatorName(String name) { this.comparatorName = name; return this; }
+        public Builder objectTargetFileSize(long bytes) { this.objectTargetFileSize = bytes; return this; }
+        public Builder objectLazyCompaction(boolean enable) { this.objectLazyCompaction = enable; return this; }
+        public Builder objectPrefetchCompaction(boolean enable) { this.objectPrefetchCompaction = enable; return this; }
 
         public Builder columnFamilyName(String name) { this.columnFamilyName = name; return this; }
         public Builder defaultTtlSeconds(long seconds) { this.defaultTtlSeconds = seconds; return this; }

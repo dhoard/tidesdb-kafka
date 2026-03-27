@@ -548,6 +548,259 @@ class TidesDBStoreTest {
         assertThat(result).isNull();
     }
 
+    // ==================== Unified Memtable Config Tests ====================
+
+    @Test
+    @DisplayName("Should create store with unified memtable config")
+    void testUnifiedMemtableConfig() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .unifiedMemtable(true)
+            .unifiedMemtableWriteBufferSize(32 * 1024 * 1024)
+            .unifiedMemtableSkipListMaxLevel(16)
+            .unifiedMemtableSkipListProbability(0.5f)
+            .unifiedMemtableSyncMode(0)
+            .unifiedMemtableSyncIntervalUs(0)
+            .build();
+
+        TidesDBStore uniStore = new TidesDBStore("unified-store", config);
+        StateStoreContext uniCtx = mock(StateStoreContext.class);
+        File uniDir = new File(tempDir, "unified");
+        uniDir.mkdirs();
+        when(uniCtx.stateDir()).thenReturn(uniDir);
+
+        uniStore.init(uniCtx, uniStore);
+        assertThat(uniStore.isOpen()).isTrue();
+        assertThat(uniStore.getStoreConfig().isUnifiedMemtable()).isTrue();
+        assertThat(uniStore.getStoreConfig().getUnifiedMemtableWriteBufferSize())
+            .isEqualTo(32 * 1024 * 1024);
+
+        // Verify basic operations work with unified memtable
+        uniStore.put(Bytes.wrap("uk1".getBytes()), "uv1".getBytes());
+        assertThat(uniStore.get(Bytes.wrap("uk1".getBytes()))).isEqualTo("uv1".getBytes());
+
+        uniStore.close();
+    }
+
+    @Test
+    @DisplayName("Should expose unified memtable config getters")
+    void testUnifiedMemtableConfigGetters() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .unifiedMemtable(false)
+            .unifiedMemtableWriteBufferSize(0)
+            .unifiedMemtableSkipListMaxLevel(0)
+            .unifiedMemtableSkipListProbability(0)
+            .unifiedMemtableSyncMode(0)
+            .unifiedMemtableSyncIntervalUs(0)
+            .build();
+
+        assertThat(config.isUnifiedMemtable()).isFalse();
+        assertThat(config.getUnifiedMemtableWriteBufferSize()).isEqualTo(0);
+        assertThat(config.getUnifiedMemtableSkipListMaxLevel()).isEqualTo(0);
+        assertThat(config.getUnifiedMemtableSkipListProbability()).isEqualTo(0);
+        assertThat(config.getUnifiedMemtableSyncMode()).isEqualTo(0);
+        assertThat(config.getUnifiedMemtableSyncIntervalUs()).isEqualTo(0);
+    }
+
+    // ==================== New CF Config Field Tests ====================
+
+    @Test
+    @DisplayName("Should create store with dividingLevelOffset and minDiskSpace")
+    void testNewCfConfigFields() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .dividingLevelOffset(3)
+            .minDiskSpace(200 * 1024 * 1024)
+            .build();
+
+        TidesDBStore cfStore = new TidesDBStore("cf-config-store", config);
+        StateStoreContext cfCtx = mock(StateStoreContext.class);
+        File cfDir = new File(tempDir, "cfconfig");
+        cfDir.mkdirs();
+        when(cfCtx.stateDir()).thenReturn(cfDir);
+
+        cfStore.init(cfCtx, cfStore);
+        assertThat(cfStore.isOpen()).isTrue();
+        assertThat(cfStore.getStoreConfig().getDividingLevelOffset()).isEqualTo(3);
+        assertThat(cfStore.getStoreConfig().getMinDiskSpace()).isEqualTo(200 * 1024 * 1024);
+
+        cfStore.put(Bytes.wrap("dk1".getBytes()), "dv1".getBytes());
+        assertThat(cfStore.get(Bytes.wrap("dk1".getBytes()))).isEqualTo("dv1".getBytes());
+
+        cfStore.close();
+    }
+
+    @Test
+    @DisplayName("Should expose comparatorName config")
+    void testComparatorNameConfig() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .comparatorName("reverse")
+            .build();
+
+        assertThat(config.getComparatorName()).isEqualTo("reverse");
+    }
+
+    @Test
+    @DisplayName("Should have correct default values for new config fields")
+    void testNewConfigDefaults() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.defaultConfig();
+
+        assertThat(config.getDividingLevelOffset()).isEqualTo(2);
+        assertThat(config.getMinDiskSpace()).isEqualTo(100 * 1024 * 1024);
+        assertThat(config.getComparatorName()).isEqualTo("");
+        assertThat(config.isUnifiedMemtable()).isFalse();
+        assertThat(config.getUnifiedMemtableWriteBufferSize()).isEqualTo(0);
+        assertThat(config.getObjectStoreFsPath()).isNull();
+        assertThat(config.getObjectStoreConfig()).isNull();
+        assertThat(config.getObjectTargetFileSize()).isEqualTo(0);
+        assertThat(config.isObjectLazyCompaction()).isFalse();
+        assertThat(config.isObjectPrefetchCompaction()).isTrue();
+    }
+
+    // ==================== Object Store Config Tests ====================
+
+    @Test
+    @DisplayName("Should create store config with object store FS path")
+    void testObjectStoreFsPathConfig() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .objectStoreFsPath("/tmp/objstore")
+            .build();
+
+        assertThat(config.getObjectStoreFsPath()).isEqualTo("/tmp/objstore");
+    }
+
+    @Test
+    @DisplayName("Should create store config with ObjectStoreConfig")
+    void testObjectStoreConfig() {
+        ObjectStoreConfig objConfig = ObjectStoreConfig.builder()
+            .localCacheMaxBytes(512 * 1024 * 1024)
+            .cacheOnRead(true)
+            .cacheOnWrite(false)
+            .maxConcurrentUploads(8)
+            .maxConcurrentDownloads(16)
+            .multipartThreshold(128 * 1024 * 1024)
+            .multipartPartSize(16 * 1024 * 1024)
+            .syncManifestToObject(true)
+            .replicateWal(true)
+            .walUploadSync(false)
+            .walSyncThresholdBytes(2 * 1024 * 1024)
+            .walSyncOnCommit(false)
+            .replicaMode(false)
+            .replicaSyncIntervalUs(10000000)
+            .replicaReplayWal(true)
+            .build();
+
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .objectStoreConfig(objConfig)
+            .build();
+
+        assertThat(config.getObjectStoreConfig()).isNotNull();
+        assertThat(config.getObjectStoreConfig().getMaxConcurrentUploads()).isEqualTo(8);
+        assertThat(config.getObjectStoreConfig().getMaxConcurrentDownloads()).isEqualTo(16);
+        assertThat(config.getObjectStoreConfig().isCacheOnWrite()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Should create store config with CF-level object store options")
+    void testObjectStoreCfConfig() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .objectTargetFileSize(512 * 1024 * 1024)
+            .objectLazyCompaction(true)
+            .objectPrefetchCompaction(false)
+            .build();
+
+        assertThat(config.getObjectTargetFileSize()).isEqualTo(512 * 1024 * 1024);
+        assertThat(config.isObjectLazyCompaction()).isTrue();
+        assertThat(config.isObjectPrefetchCompaction()).isFalse();
+    }
+
+    // ==================== Column Family Management Tests ====================
+
+    @Test
+    @DisplayName("Should list column families")
+    void testListColumnFamilies() throws Exception {
+        String[] cfNames = store.listColumnFamilies();
+        assertThat(cfNames).isNotNull();
+        assertThat(cfNames).hasSizeGreaterThanOrEqualTo(1);
+        assertThat(cfNames).contains("default");
+    }
+
+    @Test
+    @DisplayName("Should clone column family")
+    void testCloneColumnFamily() throws Exception {
+        // Write data to the default CF
+        store.put(Bytes.wrap("clone-k1".getBytes()), "clone-v1".getBytes());
+        store.flush();
+
+        // Clone the default CF
+        store.cloneColumnFamily("default", "cloned_cf");
+
+        // Verify clone exists
+        String[] cfNames = store.listColumnFamilies();
+        assertThat(cfNames).contains("cloned_cf");
+
+        // Clean up
+        store.dropColumnFamily("cloned_cf");
+    }
+
+    @Test
+    @DisplayName("Should rename column family")
+    void testRenameColumnFamily() throws Exception {
+        // Create a CF to rename
+        TidesDB db = store.getDb();
+        ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder().build();
+        db.createColumnFamily("rename_source", cfConfig);
+
+        // Rename it
+        store.renameColumnFamily("rename_source", "rename_dest");
+
+        // Verify the rename
+        String[] cfNames = store.listColumnFamilies();
+        assertThat(cfNames).contains("rename_dest");
+        assertThat(cfNames).doesNotContain("rename_source");
+
+        // Clean up
+        store.dropColumnFamily("rename_dest");
+    }
+
+    @Test
+    @DisplayName("Should drop column family")
+    void testDropColumnFamily() throws Exception {
+        // Create a CF to drop
+        TidesDB db = store.getDb();
+        ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder().build();
+        db.createColumnFamily("drop_me", cfConfig);
+
+        String[] beforeNames = store.listColumnFamilies();
+        assertThat(beforeNames).contains("drop_me");
+
+        // Drop it
+        store.dropColumnFamily("drop_me");
+
+        String[] afterNames = store.listColumnFamilies();
+        assertThat(afterNames).doesNotContain("drop_me");
+    }
+
+    // ==================== Comparator Tests ====================
+
+    @Test
+    @DisplayName("Should expose registerComparator method")
+    void testRegisterComparator() {
+        // Built-in comparators like "reverse" are already registered internally,
+        // so registering them again throws invalid arguments.
+        // This test verifies the method is callable and routes to the underlying API.
+        assertThatThrownBy(() -> store.registerComparator("reverse", null))
+            .isInstanceOf(TidesDBException.class);
+    }
+
+    // ==================== Replica Tests ====================
+
+    @Test
+    @DisplayName("Should expose promoteToPrimary method")
+    void testPromoteToPrimaryNotReplica() {
+        // Calling on non-replica should throw or handle gracefully
+        assertThatThrownBy(() -> store.promoteToPrimary())
+            .isInstanceOf(Exception.class);
+    }
+
     // ==================== Original Tests ====================
 
     @Test

@@ -248,7 +248,7 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
 
             log.info("Initializing TidesDB store '{}' at path: {}", name, dbPath);
 
-            Config config = Config.builder(dbPath)
+            Config.Builder configBuilder = Config.builder(dbPath)
                 .numFlushThreads(storeConfig.getNumFlushThreads())
                 .numCompactionThreads(storeConfig.getNumCompactionThreads())
                 .logLevel(storeConfig.getLogLevel())
@@ -257,13 +257,33 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
                 .maxMemoryUsage(storeConfig.getMaxMemoryUsage())
                 .logToFile(storeConfig.isLogToFile())
                 .logTruncationAt(storeConfig.getLogTruncationAt())
-                .build();
+                .unifiedMemtable(storeConfig.isUnifiedMemtable())
+                .unifiedMemtableWriteBufferSize(storeConfig.getUnifiedMemtableWriteBufferSize())
+                .unifiedMemtableSkipListMaxLevel(storeConfig.getUnifiedMemtableSkipListMaxLevel())
+                .unifiedMemtableSkipListProbability(storeConfig.getUnifiedMemtableSkipListProbability())
+                .unifiedMemtableSyncMode(storeConfig.getUnifiedMemtableSyncMode())
+                .unifiedMemtableSyncIntervalUs(storeConfig.getUnifiedMemtableSyncIntervalUs());
+
+            if (storeConfig.getObjectStoreFsPath() != null) {
+                configBuilder.objectStoreFsPath(storeConfig.getObjectStoreFsPath());
+            }
+            if (storeConfig.getObjectStoreConfig() != null) {
+                configBuilder.objectStoreConfig(storeConfig.getObjectStoreConfig());
+            }
+
+            Config config = configBuilder.build();
 
             this.db = TidesDB.open(config);
 
             // Create or get column family with full configuration
             String cfName = storeConfig.getColumnFamilyName();
-            ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder()
+            // Register custom comparator if specified
+            String compName = storeConfig.getComparatorName();
+            if (compName != null && !compName.isEmpty()) {
+                db.registerComparator(compName, null);
+            }
+
+            ColumnFamilyConfig.Builder cfBuilder = ColumnFamilyConfig.builder()
                 .writeBufferSize(storeConfig.getWriteBufferSize())
                 .compressionAlgorithm(storeConfig.getCompressionAlgorithm())
                 .enableBloomFilter(storeConfig.isEnableBloomFilter())
@@ -282,7 +302,17 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
                 .klogValueThreshold(storeConfig.getKlogValueThreshold())
                 .l0QueueStallThreshold(storeConfig.getL0QueueStallThreshold())
                 .l1FileCountTrigger(storeConfig.getL1FileCountTrigger())
-                .build();
+                .dividingLevelOffset(storeConfig.getDividingLevelOffset())
+                .minDiskSpace(storeConfig.getMinDiskSpace())
+                .objectTargetFileSize(storeConfig.getObjectTargetFileSize())
+                .objectLazyCompaction(storeConfig.isObjectLazyCompaction())
+                .objectPrefetchCompaction(storeConfig.isObjectPrefetchCompaction());
+
+            if (compName != null && !compName.isEmpty()) {
+                cfBuilder.comparatorName(compName);
+            }
+
+            ColumnFamilyConfig cfConfig = cfBuilder.build();
 
             try {
                 this.columnFamily = db.getColumnFamily(cfName);
@@ -507,6 +537,63 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
     public boolean isCompacting() throws TidesDBException {
         validateStoreOpen();
         return columnFamily.isCompacting();
+    }
+
+    // ==================== Column Family Management ====================
+
+    /**
+     * List all column family names in the database.
+     */
+    public String[] listColumnFamilies() throws TidesDBException {
+        validateStoreOpen();
+        return db.listColumnFamilies();
+    }
+
+    /**
+     * Rename a column family atomically.
+     * Waits for any in-progress flush/compaction to complete before renaming.
+     */
+    public void renameColumnFamily(String oldName, String newName) throws TidesDBException {
+        validateStoreOpen();
+        db.renameColumnFamily(oldName, newName);
+    }
+
+    /**
+     * Clone an existing column family to a new name.
+     * The clone is completely independent of the source.
+     */
+    public void cloneColumnFamily(String srcName, String dstName) throws TidesDBException {
+        validateStoreOpen();
+        db.cloneColumnFamily(srcName, dstName);
+    }
+
+    /**
+     * Drop a column family by name.
+     */
+    public void dropColumnFamily(String cfName) throws TidesDBException {
+        validateStoreOpen();
+        db.dropColumnFamily(cfName);
+    }
+
+    // ==================== Comparator Operations ====================
+
+    /**
+     * Register a custom comparator for use with column families.
+     * Built-in comparators: "memcmp", "lexicographic", "uint64", "int64", "reverse", "case_insensitive".
+     */
+    public void registerComparator(String name, String ctx) throws TidesDBException {
+        validateStoreOpen();
+        db.registerComparator(name, ctx);
+    }
+
+    // ==================== Replica Operations ====================
+
+    /**
+     * Switch a read-only replica database to primary mode.
+     */
+    public void promoteToPrimary() throws TidesDBException {
+        validateStoreOpen();
+        db.promoteToPrimary();
     }
 
     /**

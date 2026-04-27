@@ -17,6 +17,7 @@ public class TidesDBStoreConfig {
     private final long maxMemoryUsage;
     private final boolean logToFile;
     private final long logTruncationAt;
+    private final int maxConcurrentFlushes;
 
     // Unified memtable settings
     private final boolean unifiedMemtable;
@@ -52,7 +53,8 @@ public class TidesDBStoreConfig {
     private final int dividingLevelOffset;
     private final long minDiskSpace;
     private final String comparatorName;
-    private final long objectTargetFileSize;
+    private final double tombstoneDensityTrigger;
+    private final long tombstoneDensityMinEntries;
     private final boolean objectLazyCompaction;
     private final boolean objectPrefetchCompaction;
 
@@ -69,6 +71,7 @@ public class TidesDBStoreConfig {
         this.maxMemoryUsage = builder.maxMemoryUsage;
         this.logToFile = builder.logToFile;
         this.logTruncationAt = builder.logTruncationAt;
+        this.maxConcurrentFlushes = builder.maxConcurrentFlushes;
         this.unifiedMemtable = builder.unifiedMemtable;
         this.unifiedMemtableWriteBufferSize = builder.unifiedMemtableWriteBufferSize;
         this.unifiedMemtableSkipListMaxLevel = builder.unifiedMemtableSkipListMaxLevel;
@@ -98,7 +101,8 @@ public class TidesDBStoreConfig {
         this.dividingLevelOffset = builder.dividingLevelOffset;
         this.minDiskSpace = builder.minDiskSpace;
         this.comparatorName = builder.comparatorName;
-        this.objectTargetFileSize = builder.objectTargetFileSize;
+        this.tombstoneDensityTrigger = builder.tombstoneDensityTrigger;
+        this.tombstoneDensityMinEntries = builder.tombstoneDensityMinEntries;
         this.objectLazyCompaction = builder.objectLazyCompaction;
         this.objectPrefetchCompaction = builder.objectPrefetchCompaction;
         this.columnFamilyName = builder.columnFamilyName;
@@ -123,6 +127,7 @@ public class TidesDBStoreConfig {
     public long getMaxMemoryUsage() { return maxMemoryUsage; }
     public boolean isLogToFile() { return logToFile; }
     public long getLogTruncationAt() { return logTruncationAt; }
+    public int getMaxConcurrentFlushes() { return maxConcurrentFlushes; }
 
     // Unified memtable getters
     public boolean isUnifiedMemtable() { return unifiedMemtable; }
@@ -158,7 +163,8 @@ public class TidesDBStoreConfig {
     public int getDividingLevelOffset() { return dividingLevelOffset; }
     public long getMinDiskSpace() { return minDiskSpace; }
     public String getComparatorName() { return comparatorName; }
-    public long getObjectTargetFileSize() { return objectTargetFileSize; }
+    public double getTombstoneDensityTrigger() { return tombstoneDensityTrigger; }
+    public long getTombstoneDensityMinEntries() { return tombstoneDensityMinEntries; }
     public boolean isObjectLazyCompaction() { return objectLazyCompaction; }
     public boolean isObjectPrefetchCompaction() { return objectPrefetchCompaction; }
 
@@ -176,6 +182,7 @@ public class TidesDBStoreConfig {
         private long maxMemoryUsage = 0; // auto
         private boolean logToFile = false;
         private long logTruncationAt = 24 * 1024 * 1024; // 24MB
+        private int maxConcurrentFlushes = 0; // 0 = library default
 
         // Unified memtable defaults
         private boolean unifiedMemtable = false;
@@ -211,7 +218,8 @@ public class TidesDBStoreConfig {
         private int dividingLevelOffset = 2;
         private long minDiskSpace = 100 * 1024 * 1024; // 100MB
         private String comparatorName = ""; // empty = default memcmp
-        private long objectTargetFileSize = 0; // 0 = auto (256MB default)
+        private double tombstoneDensityTrigger = 0.0; // 0.0 = disabled
+        private long tombstoneDensityMinEntries = 1024;
         private boolean objectLazyCompaction = false;
         private boolean objectPrefetchCompaction = true;
 
@@ -227,6 +235,7 @@ public class TidesDBStoreConfig {
         public Builder maxMemoryUsage(long bytes) { this.maxMemoryUsage = bytes; return this; }
         public Builder logToFile(boolean enable) { this.logToFile = enable; return this; }
         public Builder logTruncationAt(long bytes) { this.logTruncationAt = bytes; return this; }
+        public Builder maxConcurrentFlushes(int n) { this.maxConcurrentFlushes = n; return this; }
 
         public Builder unifiedMemtable(boolean enable) { this.unifiedMemtable = enable; return this; }
         public Builder unifiedMemtableWriteBufferSize(long bytes) { this.unifiedMemtableWriteBufferSize = bytes; return this; }
@@ -259,7 +268,8 @@ public class TidesDBStoreConfig {
         public Builder dividingLevelOffset(int n) { this.dividingLevelOffset = n; return this; }
         public Builder minDiskSpace(long bytes) { this.minDiskSpace = bytes; return this; }
         public Builder comparatorName(String name) { this.comparatorName = name; return this; }
-        public Builder objectTargetFileSize(long bytes) { this.objectTargetFileSize = bytes; return this; }
+        public Builder tombstoneDensityTrigger(double trigger) { this.tombstoneDensityTrigger = trigger; return this; }
+        public Builder tombstoneDensityMinEntries(long entries) { this.tombstoneDensityMinEntries = entries; return this; }
         public Builder objectLazyCompaction(boolean enable) { this.objectLazyCompaction = enable; return this; }
         public Builder objectPrefetchCompaction(boolean enable) { this.objectPrefetchCompaction = enable; return this; }
 

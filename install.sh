@@ -4,7 +4,7 @@ set -e
 # TidesDB Kafka Streams Plugin Installer
 # This script installs TidesDB native library and Kafka Streams plugin
 
-VERSION="0.2.1"
+VERSION="0.4.0"
 
 # Source shared utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,7 +30,7 @@ fi
 if [ -z "$TIDESDB_CORE_VERSION" ] || [ -z "$TIDESDB_JAVA_VERSION" ]; then
     echo "Failed to fetch latest versions. Using fallback versions..."
     TIDESDB_CORE_VERSION="8.5.3"
-    TIDESDB_JAVA_VERSION="0.6.2"
+    TIDESDB_JAVA_VERSION="0.8.0"
 fi
 
 echo "✓ TidesDB Core: v$TIDESDB_CORE_VERSION"

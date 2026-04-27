@@ -155,6 +155,26 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
         }
     }
 
+    /**
+     * Write a single-delete tombstone for a key. Same read semantics as {@link #delete(Bytes)},
+     * but lets compaction drop the put and tombstone together as soon as both appear in the
+     * same merge input. Caller contract: between any two single-deletes on the same key, the
+     * key has been put at most once. Use only for insert-once / delete-once workloads. When
+     * in doubt, prefer {@link #delete(Bytes)}.
+     */
+    public void singleDelete(Bytes key) {
+        validateStoreOpen();
+        if (key == null) {
+            throw new NullPointerException("Key cannot be null");
+        }
+        try (Transaction txn = db.beginTransaction()) {
+            txn.singleDelete(columnFamily, key.get());
+            txn.commit();
+        } catch (TidesDBException e) {
+            throw new RuntimeException("Failed to single-delete key", e);
+        }
+    }
+
     @Override
     public byte[] delete(Bytes key) {
         validateStoreOpen();
@@ -257,6 +277,7 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
                 .maxMemoryUsage(storeConfig.getMaxMemoryUsage())
                 .logToFile(storeConfig.isLogToFile())
                 .logTruncationAt(storeConfig.getLogTruncationAt())
+                .maxConcurrentFlushes(storeConfig.getMaxConcurrentFlushes())
                 .unifiedMemtable(storeConfig.isUnifiedMemtable())
                 .unifiedMemtableWriteBufferSize(storeConfig.getUnifiedMemtableWriteBufferSize())
                 .unifiedMemtableSkipListMaxLevel(storeConfig.getUnifiedMemtableSkipListMaxLevel())
@@ -304,7 +325,8 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
                 .l1FileCountTrigger(storeConfig.getL1FileCountTrigger())
                 .dividingLevelOffset(storeConfig.getDividingLevelOffset())
                 .minDiskSpace(storeConfig.getMinDiskSpace())
-                .objectTargetFileSize(storeConfig.getObjectTargetFileSize())
+                .tombstoneDensityTrigger(storeConfig.getTombstoneDensityTrigger())
+                .tombstoneDensityMinEntries(storeConfig.getTombstoneDensityMinEntries())
                 .objectLazyCompaction(storeConfig.isObjectLazyCompaction())
                 .objectPrefetchCompaction(storeConfig.isObjectPrefetchCompaction());
 
@@ -450,6 +472,16 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
     }
 
     /**
+     * Synchronously compact only SSTables whose key range overlaps {@code [startKey, endKey)}.
+     * Bounds I/O to the affected portion of the LSM tree. A null/empty endpoint is unbounded
+     * on that side; both null/empty is rejected (use {@link #compact()} for full-CF compaction).
+     */
+    public void compactRange(byte[] startKey, byte[] endKey) throws TidesDBException {
+        validateStoreOpen();
+        columnFamily.compactRange(startKey, endKey);
+    }
+
+    /**
      * Synchronous flush and aggressive compaction. Blocks until complete.
      * Use before backup, after bulk deletes, or during maintenance windows.
      */
@@ -573,6 +605,14 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
     public void dropColumnFamily(String cfName) throws TidesDBException {
         validateStoreOpen();
         db.dropColumnFamily(cfName);
+    }
+
+    /**
+     * Delete a column family using its handle. Alternative to {@link #dropColumnFamily(String)}.
+     */
+    public void deleteColumnFamily(ColumnFamily cf) throws TidesDBException {
+        validateStoreOpen();
+        db.deleteColumnFamily(cf);
     }
 
     // ==================== Comparator Operations ====================

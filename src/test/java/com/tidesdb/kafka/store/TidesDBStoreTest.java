@@ -202,8 +202,7 @@ class TidesDBStoreTest {
         store.put(Bytes.wrap("key2".getBytes()), "value2".getBytes());
         store.put(Bytes.wrap("key3".getBytes()), "value3".getBytes());
 
-        // After flush, stats should reflect the entries
-        store.flush();
+        // Stats include the active memtable, so puts are visible without flush
         assertThat(store.approximateNumEntries()).isGreaterThanOrEqualTo(3);
     }
 
@@ -247,7 +246,7 @@ class TidesDBStoreTest {
             assertThat(new String(value)).isEqualTo(expectedValue);
         }
 
-        store.flush();
+        // Active memtable holds the keys until flushed; stats count it
         assertThat(store.approximateNumEntries()).isGreaterThanOrEqualTo(numKeys);
     }
 
@@ -430,10 +429,10 @@ class TidesDBStoreTest {
     void testGetStats() throws Exception {
         store.put(Bytes.wrap("s1".getBytes()), "v1".getBytes());
         store.put(Bytes.wrap("s2".getBytes()), "v2".getBytes());
-        store.flush();
 
         Stats stats = store.getStats();
         assertThat(stats).isNotNull();
+        // Active memtable is included in totalKeys
         assertThat(stats.getTotalKeys()).isGreaterThanOrEqualTo(2);
     }
 
@@ -650,9 +649,11 @@ class TidesDBStoreTest {
         assertThat(config.getUnifiedMemtableWriteBufferSize()).isEqualTo(0);
         assertThat(config.getObjectStoreFsPath()).isNull();
         assertThat(config.getObjectStoreConfig()).isNull();
-        assertThat(config.getObjectTargetFileSize()).isEqualTo(0);
         assertThat(config.isObjectLazyCompaction()).isFalse();
         assertThat(config.isObjectPrefetchCompaction()).isTrue();
+        assertThat(config.getMaxConcurrentFlushes()).isEqualTo(0);
+        assertThat(config.getTombstoneDensityTrigger()).isEqualTo(0.0);
+        assertThat(config.getTombstoneDensityMinEntries()).isEqualTo(1024);
     }
 
     // ==================== Object Store Config Tests ====================
@@ -702,12 +703,10 @@ class TidesDBStoreTest {
     @DisplayName("Should create store config with CF-level object store options")
     void testObjectStoreCfConfig() {
         TidesDBStoreConfig config = TidesDBStoreConfig.builder()
-            .objectTargetFileSize(512 * 1024 * 1024)
             .objectLazyCompaction(true)
             .objectPrefetchCompaction(false)
             .build();
 
-        assertThat(config.getObjectTargetFileSize()).isEqualTo(512 * 1024 * 1024);
         assertThat(config.isObjectLazyCompaction()).isTrue();
         assertThat(config.isObjectPrefetchCompaction()).isFalse();
     }
@@ -831,5 +830,100 @@ class TidesDBStoreTest {
         for (Thread thread : threads) {
             thread.join();
         }
+    }
+
+    // ==================== 0.8.0 Feature Tests ====================
+
+    @Test
+    @DisplayName("Should expose maxConcurrentFlushes config")
+    void testMaxConcurrentFlushesConfig() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .maxConcurrentFlushes(4)
+            .build();
+
+        assertThat(config.getMaxConcurrentFlushes()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("Should expose tombstone density trigger config")
+    void testTombstoneDensityConfig() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .tombstoneDensityTrigger(0.5)
+            .tombstoneDensityMinEntries(2048)
+            .build();
+
+        assertThat(config.getTombstoneDensityTrigger()).isEqualTo(0.5);
+        assertThat(config.getTombstoneDensityMinEntries()).isEqualTo(2048);
+    }
+
+    @Test
+    @DisplayName("Should expose tombstone observability stats")
+    void testTombstoneStats() throws Exception {
+        store.put(Bytes.wrap("ts1".getBytes()), "v1".getBytes());
+        store.put(Bytes.wrap("ts2".getBytes()), "v2".getBytes());
+        store.delete(Bytes.wrap("ts1".getBytes()));
+        store.flush();
+
+        Stats stats = store.getStats();
+        assertThat(stats).isNotNull();
+        // The new tombstone observability fields should be accessible
+        assertThat(stats.getTotalTombstones()).isGreaterThanOrEqualTo(0);
+        assertThat(stats.getTombstoneRatio()).isBetween(0.0, 1.0);
+        assertThat(stats.getMaxSstDensity()).isBetween(0.0, 1.0);
+        assertThat(stats.getMaxSstDensityLevel()).isGreaterThanOrEqualTo(0);
+        assertThat(stats.getLevelTombstoneCounts()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("Should expose compactRange method")
+    void testCompactRange() throws Exception {
+        for (int i = 0; i < 100; i++) {
+            store.put(Bytes.wrap(("rk" + i).getBytes()), ("v" + i).getBytes());
+        }
+        store.flush();
+
+        // Compact a bounded range
+        assertThatCode(() -> store.compactRange(
+            "rk0".getBytes(StandardCharsets.UTF_8),
+            "rk5".getBytes(StandardCharsets.UTF_8)
+        )).doesNotThrowAnyException();
+
+        // Both endpoints null/empty must throw
+        assertThatThrownBy(() -> store.compactRange(null, null))
+            .isInstanceOf(TidesDBException.class);
+    }
+
+    @Test
+    @DisplayName("Should expose singleDelete method")
+    void testSingleDelete() {
+        Bytes key = Bytes.wrap("sd-key".getBytes(StandardCharsets.UTF_8));
+        byte[] value = "sd-value".getBytes(StandardCharsets.UTF_8);
+
+        store.put(key, value);
+        assertThat(store.get(key)).isEqualTo(value);
+
+        store.singleDelete(key);
+        assertThat(store.get(key)).isNull();
+    }
+
+    @Test
+    @DisplayName("Should reject null key in singleDelete")
+    void testSingleDeleteNullKey() {
+        assertThatThrownBy(() -> store.singleDelete(null))
+            .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("Should expose deleteColumnFamily(ColumnFamily) handle overload")
+    void testDeleteColumnFamilyByHandle() throws Exception {
+        TidesDB db = store.getDb();
+        ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder().build();
+        db.createColumnFamily("delete_handle_cf", cfConfig);
+
+        ColumnFamily cf = db.getColumnFamily("delete_handle_cf");
+        store.deleteColumnFamily(cf);
+
+        String[] cfNames = store.listColumnFamilies();
+        assertThat(cfNames).doesNotContain("delete_handle_cf");
     }
 }

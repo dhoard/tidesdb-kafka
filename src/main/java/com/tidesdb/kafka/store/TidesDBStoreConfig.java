@@ -18,6 +18,8 @@ public class TidesDBStoreConfig {
     private final boolean logToFile;
     private final long logTruncationAt;
     private final int maxConcurrentFlushes;
+    private final long raiseOpenFileLimit;
+    private final boolean cancelBackgroundWorkOnClose;
 
     // Unified memtable settings
     private final boolean unifiedMemtable;
@@ -30,6 +32,7 @@ public class TidesDBStoreConfig {
     // Object store settings
     private final String objectStoreFsPath;
     private final ObjectStoreConfig objectStoreConfig;
+    private final S3Config objectStoreS3Config;
 
     // Column family settings
     private final long writeBufferSize;
@@ -72,6 +75,8 @@ public class TidesDBStoreConfig {
         this.logToFile = builder.logToFile;
         this.logTruncationAt = builder.logTruncationAt;
         this.maxConcurrentFlushes = builder.maxConcurrentFlushes;
+        this.raiseOpenFileLimit = builder.raiseOpenFileLimit;
+        this.cancelBackgroundWorkOnClose = builder.cancelBackgroundWorkOnClose;
         this.unifiedMemtable = builder.unifiedMemtable;
         this.unifiedMemtableWriteBufferSize = builder.unifiedMemtableWriteBufferSize;
         this.unifiedMemtableSkipListMaxLevel = builder.unifiedMemtableSkipListMaxLevel;
@@ -80,6 +85,7 @@ public class TidesDBStoreConfig {
         this.unifiedMemtableSyncIntervalUs = builder.unifiedMemtableSyncIntervalUs;
         this.objectStoreFsPath = builder.objectStoreFsPath;
         this.objectStoreConfig = builder.objectStoreConfig;
+        this.objectStoreS3Config = builder.objectStoreS3Config;
         this.writeBufferSize = builder.writeBufferSize;
         this.compressionAlgorithm = builder.compressionAlgorithm;
         this.enableBloomFilter = builder.enableBloomFilter;
@@ -128,6 +134,8 @@ public class TidesDBStoreConfig {
     public boolean isLogToFile() { return logToFile; }
     public long getLogTruncationAt() { return logTruncationAt; }
     public int getMaxConcurrentFlushes() { return maxConcurrentFlushes; }
+    public long getRaiseOpenFileLimit() { return raiseOpenFileLimit; }
+    public boolean isCancelBackgroundWorkOnClose() { return cancelBackgroundWorkOnClose; }
 
     // Unified memtable getters
     public boolean isUnifiedMemtable() { return unifiedMemtable; }
@@ -140,6 +148,7 @@ public class TidesDBStoreConfig {
     // Object store getters
     public String getObjectStoreFsPath() { return objectStoreFsPath; }
     public ObjectStoreConfig getObjectStoreConfig() { return objectStoreConfig; }
+    public S3Config getObjectStoreS3Config() { return objectStoreS3Config; }
 
     // Column family getters
     public long getWriteBufferSize() { return writeBufferSize; }
@@ -183,6 +192,8 @@ public class TidesDBStoreConfig {
         private boolean logToFile = false;
         private long logTruncationAt = 24 * 1024 * 1024; // 24MB
         private int maxConcurrentFlushes = 0; // 0 = library default
+        private long raiseOpenFileLimit = 0; // 0 = leave process open-file ceiling untouched
+        private boolean cancelBackgroundWorkOnClose = false; // true = fast shutdown
 
         // Unified memtable defaults
         private boolean unifiedMemtable = false;
@@ -195,6 +206,7 @@ public class TidesDBStoreConfig {
         // Object store defaults
         private String objectStoreFsPath = null; // null = local only
         private ObjectStoreConfig objectStoreConfig = null; // null = use defaults
+        private S3Config objectStoreS3Config = null; // null = no S3 backend
 
         // Column family defaults
         private long writeBufferSize = 64 * 1024 * 1024; // 64MB
@@ -237,6 +249,21 @@ public class TidesDBStoreConfig {
         public Builder logTruncationAt(long bytes) { this.logTruncationAt = bytes; return this; }
         public Builder maxConcurrentFlushes(int n) { this.maxConcurrentFlushes = n; return this; }
 
+        /**
+         * Raise this process's open-file ceiling toward {@code desired} descriptors before the
+         * database opens, letting the engine keep more sstables open. Applied via
+         * {@code tidesdb_raise_open_file_limit} at init time, before open (the engine sizes
+         * max_open_sstables to fit the ceiling at open). 0 (default) leaves the limit untouched.
+         */
+        public Builder raiseOpenFileLimit(long desired) { this.raiseOpenFileLimit = desired; return this; }
+
+        /**
+         * When true, cancel background compaction db-wide right before close for a fast shutdown.
+         * In-flight merges bail safely and queued compaction is skipped; flushes are unaffected so
+         * durability is preserved. Default false.
+         */
+        public Builder cancelBackgroundWorkOnClose(boolean enable) { this.cancelBackgroundWorkOnClose = enable; return this; }
+
         public Builder unifiedMemtable(boolean enable) { this.unifiedMemtable = enable; return this; }
         public Builder unifiedMemtableWriteBufferSize(long bytes) { this.unifiedMemtableWriteBufferSize = bytes; return this; }
         public Builder unifiedMemtableSkipListMaxLevel(int n) { this.unifiedMemtableSkipListMaxLevel = n; return this; }
@@ -246,6 +273,15 @@ public class TidesDBStoreConfig {
 
         public Builder objectStoreFsPath(String path) { this.objectStoreFsPath = path; return this; }
         public Builder objectStoreConfig(ObjectStoreConfig config) { this.objectStoreConfig = config; return this; }
+
+        /**
+         * Back the state store with an S3-compatible object store (AWS S3, MinIO, etc.). Takes
+         * precedence over {@link #objectStoreFsPath(String)}. Pair with
+         * {@link #objectStoreConfig(ObjectStoreConfig)} to tune cache, multipart, and replication
+         * behavior. Requires the native TidesDB library to be built with {@code TIDESDB_WITH_S3=ON};
+         * otherwise the store fails to open with a clear error.
+         */
+        public Builder objectStoreS3Config(S3Config config) { this.objectStoreS3Config = config; return this; }
 
         public Builder writeBufferSize(long bytes) { this.writeBufferSize = bytes; return this; }
         public Builder compressionAlgorithm(CompressionAlgorithm algo) { this.compressionAlgorithm = algo; return this; }

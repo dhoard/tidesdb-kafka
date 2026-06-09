@@ -7,7 +7,7 @@
 
     <groupId>com.tidesdb</groupId>
     <artifactId>tidesdb-kafka-streams</artifactId>
-    <version>0.4.0</version>
+    <version>0.4.2</version>
     <packaging>jar</packaging>
 
     <name>TidesDB Kafka</name>
@@ -18,7 +18,7 @@
         <maven.compiler.target>11</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <kafka.version>3.7.0</kafka.version>
-        <tidesdb.version>0.8.0</tidesdb.version>
+        <tidesdb.version>0.8.2</tidesdb.version>
         <junit.version>5.10.1</junit.version>
         <slf4j.version>2.0.9</slf4j.version>
     </properties>

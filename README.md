@@ -13,6 +13,8 @@ A drop-in replacement for RocksDB state stores in Kafka Streams applications, po
 - Online backup and near-instant hard-link checkpoints
 - Column family stats, database stats, and block cache stats
 - Synchronous compaction and explicit durability control
+- Fast shutdown via background-work cancellation and a configurable process open-file limit
+- Tiered storage on a filesystem or S3-compatible object store (AWS S3, MinIO, GCS)
 - Change write buffer, bloom FPR, sync mode without restart
 - Pooled transaction with `reset()` to minimize allocation on the hot path
 

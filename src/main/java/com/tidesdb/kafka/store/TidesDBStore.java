@@ -268,6 +268,14 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
 
             log.info("Initializing TidesDB store '{}' at path: {}", name, dbPath);
 
+            // Raise the process open-file ceiling before open, if requested. The engine sizes
+            // max_open_sstables to fit the ceiling at open time, so this must precede TidesDB.open().
+            if (storeConfig.getRaiseOpenFileLimit() > 0) {
+                long ceiling = TidesDB.raiseOpenFileLimit(storeConfig.getRaiseOpenFileLimit());
+                log.info("Raised open-file ceiling toward {} for store '{}', effective ceiling: {}",
+                         storeConfig.getRaiseOpenFileLimit(), name, ceiling);
+            }
+
             Config.Builder configBuilder = Config.builder(dbPath)
                 .numFlushThreads(storeConfig.getNumFlushThreads())
                 .numCompactionThreads(storeConfig.getNumCompactionThreads())
@@ -285,7 +293,9 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
                 .unifiedMemtableSyncMode(storeConfig.getUnifiedMemtableSyncMode())
                 .unifiedMemtableSyncIntervalUs(storeConfig.getUnifiedMemtableSyncIntervalUs());
 
-            if (storeConfig.getObjectStoreFsPath() != null) {
+            if (storeConfig.getObjectStoreS3Config() != null) {
+                configBuilder.objectStoreS3Config(storeConfig.getObjectStoreS3Config());
+            } else if (storeConfig.getObjectStoreFsPath() != null) {
                 configBuilder.objectStoreFsPath(storeConfig.getObjectStoreFsPath());
             }
             if (storeConfig.getObjectStoreConfig() != null) {
@@ -377,6 +387,13 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
                     reusableTxn = null;
                 }
                 if (db != null) {
+                    if (storeConfig.isCancelBackgroundWorkOnClose()) {
+                        try {
+                            db.cancelBackgroundWork();
+                        } catch (TidesDBException e) {
+                            log.warn("Failed to cancel background work before close", e);
+                        }
+                    }
                     db.close();
                 }
                 open = false;
@@ -556,6 +573,42 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
     }
 
     /**
+     * Cancel background compaction db-wide. In-flight merges bail safely at their next
+     * checkpoint and queued compaction is skipped; flushes are unaffected so durability is
+     * preserved. Sticky for the session (reset on next open). Intended to be called right
+     * before {@link #close()} for a fast shutdown; set
+     * {@link TidesDBStoreConfig.Builder#cancelBackgroundWorkOnClose(boolean)} to have close
+     * invoke it automatically.
+     */
+    public void cancelBackgroundWork() throws TidesDBException {
+        validateStoreOpen();
+        db.cancelBackgroundWork();
+    }
+
+    /**
+     * Raise this process's open-file ceiling toward {@code desired} descriptors so a database
+     * can keep more sstables open. Process-wide and opt-in; must be called BEFORE the store is
+     * opened to take effect (the engine sizes max_open_sstables to fit the ceiling at open). A
+     * failed or partial raise is non-fatal. Prefer
+     * {@link TidesDBStoreConfig.Builder#raiseOpenFileLimit(long)} to apply it during init.
+     * @param desired target descriptor count; {@code <= 0} just reports the current ceiling
+     * @return the open-file ceiling in effect after the attempt
+     */
+    public static long raiseOpenFileLimit(long desired) {
+        return TidesDB.raiseOpenFileLimit(desired);
+    }
+
+    /**
+     * Reports whether the native TidesDB library was built with S3 object store support
+     * ({@code TIDESDB_WITH_S3=ON}). When false, configuring an {@link com.tidesdb.S3Config} via
+     * {@link TidesDBStoreConfig.Builder#objectStoreS3Config} and opening the store throws.
+     * @return true if an S3-compatible backend can be used, false otherwise
+     */
+    public static boolean isS3Available() {
+        return TidesDB.isS3Available();
+    }
+
+    /**
      * Check if the column family is currently flushing.
      */
     public boolean isFlushing() throws TidesDBException {
@@ -572,6 +625,25 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
     }
 
     // ==================== Column Family Management ====================
+
+    /**
+     * Create an additional column family in the database. The store's own column family is
+     * created automatically during {@link #init}; use this to manage extra column families that
+     * share the same database instance.
+     */
+    public void createColumnFamily(String cfName, ColumnFamilyConfig cfConfig) throws TidesDBException {
+        validateStoreOpen();
+        db.createColumnFamily(cfName, cfConfig);
+    }
+
+    /**
+     * Fetch a column family handle by name. Use {@link #getColumnFamily()} for the store's own
+     * column family.
+     */
+    public ColumnFamily getColumnFamily(String cfName) throws TidesDBException {
+        validateStoreOpen();
+        return db.getColumnFamily(cfName);
+    }
 
     /**
      * List all column family names in the database.

@@ -654,6 +654,8 @@ class TidesDBStoreTest {
         assertThat(config.getMaxConcurrentFlushes()).isEqualTo(0);
         assertThat(config.getTombstoneDensityTrigger()).isEqualTo(0.0);
         assertThat(config.getTombstoneDensityMinEntries()).isEqualTo(1024);
+        assertThat(config.getRaiseOpenFileLimit()).isEqualTo(0);
+        assertThat(config.isCancelBackgroundWorkOnClose()).isFalse();
     }
 
     // ==================== Object Store Config Tests ====================
@@ -925,5 +927,166 @@ class TidesDBStoreTest {
 
         String[] cfNames = store.listColumnFamilies();
         assertThat(cfNames).doesNotContain("delete_handle_cf");
+    }
+
+    // ==================== 0.8.1 Feature Tests ====================
+
+    @Test
+    @DisplayName("Should cancel background work without error")
+    void testCancelBackgroundWork() {
+        store.put(Bytes.wrap("cbw1".getBytes()), "v1".getBytes());
+        store.flush();
+        assertThatCode(() -> store.cancelBackgroundWork()).doesNotThrowAnyException();
+
+        // After cancelling, the store is still usable for reads/writes
+        store.put(Bytes.wrap("cbw2".getBytes()), "v2".getBytes());
+        assertThat(store.get(Bytes.wrap("cbw2".getBytes()))).isEqualTo("v2".getBytes());
+    }
+
+    @Test
+    @DisplayName("Should throw when cancelling background work on a closed store")
+    void testCancelBackgroundWorkClosed() {
+        store.close();
+        assertThatThrownBy(() -> store.cancelBackgroundWork())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("not open");
+    }
+
+    @Test
+    @DisplayName("Should fast-shutdown when cancelBackgroundWorkOnClose is set")
+    void testCancelBackgroundWorkOnClose() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .cancelBackgroundWorkOnClose(true)
+            .build();
+        assertThat(config.isCancelBackgroundWorkOnClose()).isTrue();
+
+        TidesDBStore fastStore = new TidesDBStore("fast-shutdown-store", config);
+        StateStoreContext ctx = mock(StateStoreContext.class);
+        File dir = new File(tempDir, "fast-shutdown");
+        dir.mkdirs();
+        when(ctx.stateDir()).thenReturn(dir);
+
+        fastStore.init(ctx, fastStore);
+        for (int i = 0; i < 200; i++) {
+            fastStore.put(Bytes.wrap(("fk" + i).getBytes()), ("v" + i).getBytes());
+        }
+        fastStore.flush();
+
+        // Close should cancel background work first, then close cleanly
+        assertThatCode(() -> fastStore.close()).doesNotThrowAnyException();
+        assertThat(fastStore.isOpen()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Should report process open-file ceiling via static raiseOpenFileLimit")
+    void testRaiseOpenFileLimitStatic() {
+        // desired <= 0 just reports the current ceiling without changing it
+        long current = TidesDBStore.raiseOpenFileLimit(0);
+        assertThat(current).isGreaterThan(0);
+    }
+
+    @Test
+    @DisplayName("Should open store with raiseOpenFileLimit config applied")
+    void testRaiseOpenFileLimitConfig() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .raiseOpenFileLimit(4096)
+            .build();
+        assertThat(config.getRaiseOpenFileLimit()).isEqualTo(4096);
+
+        TidesDBStore rolStore = new TidesDBStore("rol-store", config);
+        StateStoreContext ctx = mock(StateStoreContext.class);
+        File dir = new File(tempDir, "rol");
+        dir.mkdirs();
+        when(ctx.stateDir()).thenReturn(dir);
+
+        rolStore.init(ctx, rolStore);
+        assertThat(rolStore.isOpen()).isTrue();
+
+        rolStore.put(Bytes.wrap("rk1".getBytes()), "rv1".getBytes());
+        assertThat(rolStore.get(Bytes.wrap("rk1".getBytes()))).isEqualTo("rv1".getBytes());
+
+        rolStore.close();
+    }
+
+    @Test
+    @DisplayName("Should create and fetch an additional column family by name")
+    void testCreateAndGetColumnFamilyByName() throws Exception {
+        ColumnFamilyConfig cfConfig = ColumnFamilyConfig.builder().build();
+        store.createColumnFamily("extra_cf", cfConfig);
+
+        String[] cfNames = store.listColumnFamilies();
+        assertThat(cfNames).contains("extra_cf");
+
+        ColumnFamily cf = store.getColumnFamily("extra_cf");
+        assertThat(cf).isNotNull();
+        assertThat(cf.getName()).isEqualTo("extra_cf");
+
+        store.dropColumnFamily("extra_cf");
+    }
+
+    // ==================== S3 Object Store Tests ====================
+
+    @Test
+    @DisplayName("Should expose S3 object store config through the builder")
+    void testS3ConfigPlumbing() {
+        S3Config s3 = S3Config.builder()
+            .endpoint("s3.amazonaws.com")
+            .bucket("kafka-state")
+            .prefix("streams/app1/")
+            .accessKey("AKID")
+            .secretKey("SECRET")
+            .region("us-east-1")
+            .build();
+
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .objectStoreS3Config(s3)
+            .build();
+
+        assertThat(config.getObjectStoreS3Config()).isNotNull();
+        assertThat(config.getObjectStoreS3Config().getBucket()).isEqualTo("kafka-state");
+        assertThat(config.getObjectStoreS3Config().getEndpoint()).isEqualTo("s3.amazonaws.com");
+        assertThat(config.getObjectStoreS3Config().isUseSsl()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Should report S3 availability without throwing")
+    void testS3AvailabilityProbe() {
+        boolean available = TidesDBStore.isS3Available();
+        assertThat(available).isIn(true, false);
+    }
+
+    @Test
+    @DisplayName("Should fail to open an S3-backed store with a clear error when S3 is unsupported")
+    void testS3StoreOpenBehavior() {
+        S3Config s3 = S3Config.builder()
+            .endpoint("127.0.0.1:9000")
+            .bucket("kafka-test")
+            .accessKey("minioadmin")
+            .secretKey("minioadmin")
+            .usePathStyle(true)
+            .useSsl(false)
+            .build();
+
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .objectStoreS3Config(s3)
+            .build();
+
+        TidesDBStore s3Store = new TidesDBStore("s3-store", config);
+        StateStoreContext ctx = mock(StateStoreContext.class);
+        File dir = new File(tempDir, "s3");
+        dir.mkdirs();
+        when(ctx.stateDir()).thenReturn(dir);
+
+        if (TidesDBStore.isS3Available()) {
+            // S3 compiled in but no live endpoint: init must fail cleanly (wrapped), not crash.
+            assertThatThrownBy(() -> s3Store.init(ctx, s3Store))
+                .isInstanceOf(RuntimeException.class);
+        } else {
+            // No S3 support: init must surface a clear error mentioning S3 (in the cause chain).
+            assertThatThrownBy(() -> s3Store.init(ctx, s3Store))
+                .isInstanceOf(RuntimeException.class)
+                .hasStackTraceContaining("S3");
+        }
+        assertThat(s3Store.isOpen()).isFalse();
     }
 }

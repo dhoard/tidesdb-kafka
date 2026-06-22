@@ -20,6 +20,7 @@ public class TidesDBStoreConfig {
     private final int maxConcurrentFlushes;
     private final long raiseOpenFileLimit;
     private final boolean cancelBackgroundWorkOnClose;
+    private final boolean finishCompactionsOnClose;
 
     // Unified memtable settings
     private final boolean unifiedMemtable;
@@ -77,6 +78,7 @@ public class TidesDBStoreConfig {
         this.maxConcurrentFlushes = builder.maxConcurrentFlushes;
         this.raiseOpenFileLimit = builder.raiseOpenFileLimit;
         this.cancelBackgroundWorkOnClose = builder.cancelBackgroundWorkOnClose;
+        this.finishCompactionsOnClose = builder.finishCompactionsOnClose;
         this.unifiedMemtable = builder.unifiedMemtable;
         this.unifiedMemtableWriteBufferSize = builder.unifiedMemtableWriteBufferSize;
         this.unifiedMemtableSkipListMaxLevel = builder.unifiedMemtableSkipListMaxLevel;
@@ -136,6 +138,7 @@ public class TidesDBStoreConfig {
     public int getMaxConcurrentFlushes() { return maxConcurrentFlushes; }
     public long getRaiseOpenFileLimit() { return raiseOpenFileLimit; }
     public boolean isCancelBackgroundWorkOnClose() { return cancelBackgroundWorkOnClose; }
+    public boolean isFinishCompactionsOnClose() { return finishCompactionsOnClose; }
 
     // Unified memtable getters
     public boolean isUnifiedMemtable() { return unifiedMemtable; }
@@ -194,6 +197,7 @@ public class TidesDBStoreConfig {
         private int maxConcurrentFlushes = 0; // 0 = library default
         private long raiseOpenFileLimit = 0; // 0 = leave process open-file ceiling untouched
         private boolean cancelBackgroundWorkOnClose = false; // true = fast shutdown
+        private boolean finishCompactionsOnClose = false; // false = cancel in-flight compactions at next checkpoint on close
 
         // Unified memtable defaults
         private boolean unifiedMemtable = false;
@@ -263,6 +267,17 @@ public class TidesDBStoreConfig {
          * durability is preserved. Default false.
          */
         public Builder cancelBackgroundWorkOnClose(boolean enable) { this.cancelBackgroundWorkOnClose = enable; return this; }
+
+        /**
+         * Controls how {@code close()} treats compactions that are still running. When false
+         * (default), close cancels in-flight compactions at their next checkpoint for a fast
+         * shutdown — the merge discards its uncommitted output and leaves inputs intact, so no
+         * data is lost (recovery handles a mid-merge state the same way). When true, close waits
+         * for in-flight compactions to run to completion before returning. Applied to the native
+         * database at open time. Distinct from {@link #cancelBackgroundWorkOnClose(boolean)}, which
+         * proactively cancels background work right before close.
+         */
+        public Builder finishCompactionsOnClose(boolean enable) { this.finishCompactionsOnClose = enable; return this; }
 
         public Builder unifiedMemtable(boolean enable) { this.unifiedMemtable = enable; return this; }
         public Builder unifiedMemtableWriteBufferSize(long bytes) { this.unifiedMemtableWriteBufferSize = bytes; return this; }

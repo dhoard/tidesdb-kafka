@@ -286,6 +286,7 @@ public class TidesDBStore implements KeyValueStore<Bytes, byte[]> {
                 .logToFile(storeConfig.isLogToFile())
                 .logTruncationAt(storeConfig.getLogTruncationAt())
                 .maxConcurrentFlushes(storeConfig.getMaxConcurrentFlushes())
+                .finishCompactionsOnClose(storeConfig.isFinishCompactionsOnClose())
                 .unifiedMemtable(storeConfig.isUnifiedMemtable())
                 .unifiedMemtableWriteBufferSize(storeConfig.getUnifiedMemtableWriteBufferSize())
                 .unifiedMemtableSkipListMaxLevel(storeConfig.getUnifiedMemtableSkipListMaxLevel())

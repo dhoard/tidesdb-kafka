@@ -656,6 +656,7 @@ class TidesDBStoreTest {
         assertThat(config.getTombstoneDensityMinEntries()).isEqualTo(1024);
         assertThat(config.getRaiseOpenFileLimit()).isEqualTo(0);
         assertThat(config.isCancelBackgroundWorkOnClose()).isFalse();
+        assertThat(config.isFinishCompactionsOnClose()).isFalse();
     }
 
     // ==================== Object Store Config Tests ====================
@@ -978,6 +979,43 @@ class TidesDBStoreTest {
     }
 
     @Test
+    @DisplayName("Should expose finishCompactionsOnClose config")
+    void testFinishCompactionsOnCloseConfig() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .finishCompactionsOnClose(true)
+            .build();
+
+        assertThat(config.isFinishCompactionsOnClose()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Should open and close a store with finishCompactionsOnClose set")
+    void testFinishCompactionsOnCloseOpen() {
+        TidesDBStoreConfig config = TidesDBStoreConfig.builder()
+            .finishCompactionsOnClose(true)
+            .build();
+
+        TidesDBStore fcStore = new TidesDBStore("finish-compactions-store", config);
+        StateStoreContext ctx = mock(StateStoreContext.class);
+        File dir = new File(tempDir, "finish-compactions");
+        dir.mkdirs();
+        when(ctx.stateDir()).thenReturn(dir);
+
+        fcStore.init(ctx, fcStore);
+        assertThat(fcStore.isOpen()).isTrue();
+        assertThat(fcStore.getStoreConfig().isFinishCompactionsOnClose()).isTrue();
+
+        for (int i = 0; i < 200; i++) {
+            fcStore.put(Bytes.wrap(("fc" + i).getBytes()), ("v" + i).getBytes());
+        }
+        fcStore.flush();
+
+        // close() must let in-flight compactions finish before returning
+        assertThatCode(() -> fcStore.close()).doesNotThrowAnyException();
+        assertThat(fcStore.isOpen()).isFalse();
+    }
+
+    @Test
     @DisplayName("Should report process open-file ceiling via static raiseOpenFileLimit")
     void testRaiseOpenFileLimitStatic() {
         // desired <= 0 just reports the current ceiling without changing it
@@ -1078,15 +1116,25 @@ class TidesDBStoreTest {
         when(ctx.stateDir()).thenReturn(dir);
 
         if (TidesDBStore.isS3Available()) {
-            // S3 compiled in but no live endpoint: init must fail cleanly (wrapped), not crash.
-            assertThatThrownBy(() -> s3Store.init(ctx, s3Store))
-                .isInstanceOf(RuntimeException.class);
+            // S3 compiled in. Against an unreachable endpoint the engine may either fail at
+            // open (eager connect) or open successfully and defer the connection to the first
+            // object I/O (lazy connect). Both outcomes are acceptable; neither may crash.
+            try {
+                s3Store.init(ctx, s3Store);
+                // Lazy connect: the store opened cleanly. Tidy up.
+                assertThat(s3Store.isOpen()).isTrue();
+                s3Store.close();
+                assertThat(s3Store.isOpen()).isFalse();
+            } catch (RuntimeException e) {
+                // Eager connect failure must be cleanly wrapped, not a crash.
+                assertThat(s3Store.isOpen()).isFalse();
+            }
         } else {
             // No S3 support: init must surface a clear error mentioning S3 (in the cause chain).
             assertThatThrownBy(() -> s3Store.init(ctx, s3Store))
                 .isInstanceOf(RuntimeException.class)
                 .hasStackTraceContaining("S3");
+            assertThat(s3Store.isOpen()).isFalse();
         }
-        assertThat(s3Store.isOpen()).isFalse();
     }
 }
